@@ -100,6 +100,9 @@ function validate(target, numbers, attempt::AbstractString)
     validate(target, numbers, Meta.parse(attempt))
 end
 
+validate(target::Integer, numbers, number::Integer) = target == number && number in numbers
+validate(_...) = false
+
 """
 
     validate(target::Integer, numbers, expr::Expr)
@@ -157,6 +160,7 @@ validatesymbols(attempt::AbstractString, symbols...) =
         validatesymbols(Meta.parse(attempt), symbols...)
 validatesymbols(attempt::Expr, symbols = Set((:+, :-, :*, :/, :÷))) =
         issubset(keep(Symbol, attempt), symbols)
+validatesymbols(_...) = false
 
 """
 
@@ -450,6 +454,12 @@ function numbersgame(::CLI, _...)
     end
     print("How did you do it? ")
     attempt = Meta.parse(readline())
+    while !validatesymbols(attempt)
+        println("You may only use addition, subtraction, multiplication and division.")
+        print("How did you do it? ")
+        attempt = Meta.parse(readline())
+    end
+
     if validate(actual, numbers, attempt)
         score = numberscore(target, actual)
         println(
@@ -480,9 +490,6 @@ function numbersgame(::CLI, _...)
                 join(missingvalues(keep(Int, attempt), numbers), ", ", " and "),
                 " to do that."
             )
-        end
-        if !validatesymbols(attempt)
-            println("You may only use addition, subtraction, multiplication and division.")
         end
         println("You scored no points this round.")
         0
