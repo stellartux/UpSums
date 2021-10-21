@@ -1,53 +1,27 @@
-using DataStructures, Base.Iterators, Random
-
-"Counts each element in `iter`. Returns a dictionary of values to counts."
-function elcount(iter)
-    dict = Dict{eltype(iter),Int}()
-    for val in iter
-        dict[val] = get(dict, val, 0) + 1
-    end
-    dict
-end
-
-struct Sampler{V,R<:Real}
-    values::Vector{Pair{R,V}}
-end
-
-function Sampler(counts::Dict{V,R}) where {V, R<:Real}
-    values = Pair{R,V}[]
-    total = zero(R)
-    for (key, value) in pairs(counts)
-        total += value
-        push!(values, total => key)
-    end
-    Sampler(values)
-end
-
-function Base.rand(sampler::Sampler)
-    sampler.values[
-        searchsortedfirst(sampler.values, first(last(sampler.values)) * rand(), by=first)
-    ][2]
-end
-(sampler::Sampler)() = rand(sampler)
+using DataStructures, Base.Iterators, Random, StatsBase
 
 loadwordlist(path::AbstractString) = Trie{Int}(line => length(line) for line in eachline(path))
-wordlist = loadwordlist(joinpath(@__DIR__, "../data/dictionary-en_GB.txt"));
 nineograms = Set(eachline("data/nineograms-en_GB.txt"))
 
-randvowel, randconsonant = begin
-    consonantcounts = elcount(c for c in read("data/dictionary-en_GB.txt", String) if isletter(c))
+wordlist, randvowel, randconsonant = let
+    dictionary = read("data/dictionary-en_GB.txt", String)
+    consonantcounts = countmap(c for c in dictionary if isletter(c))
     vowelcounts = empty(consonantcounts)
     for vowel in "aeiou"
-        if haskey(consonantcounts, vowel)
-            vowelcounts[vowel] = consonantcounts[vowel]
-            delete!(consonantcounts, vowel)
-        end
+        vowelcounts[vowel] = consonantcounts[vowel]
+        delete!(consonantcounts, vowel)
     end
-    Sampler(vowelcounts), Sampler(consonantcounts)
-end
-
-randletter() = rand((randvowel, randconsonant))()
-randletters() = shuffle!([f() for f in (randvowel, randconsonant, randletter) for _ in 1:3])
+    weightedsampler(counts) = let
+        ks = collect(keys(counts))
+        ws = fweights(collect(values(counts)))
+        () -> sample(ks, ws)
+    end
+    (
+        Trie{Int}(line => length(line) for line in split(dictionary, '\n')),
+        weightedsampler(vowelcounts),
+        weightedsampler(consonantcounts)
+    )
+end;
 
 allwords(letters) = allwords(wordlist, letters)
 allwords(letters::AbstractString) = allwords(wordlist, [letters...])
@@ -90,54 +64,99 @@ function longest(words::Vector{AbstractString})
     end
 end
 
+"""
+
+    issubcol(subcol, supercol)
+
+Determines if a collection could be made out of another collection. Differs from `issubset`
+in that if the value appears multiple times in `subcol`, it must appear at least that
+many times in `supercol`.
+"""
 function issubcol(subcol, supercol)
-    subcount = elcount(subcol)
-    supercount = elcount(supercol)
+    subcount = countmap(subcol)
+    supercount = countmap(supercol)
     all(haskey(supercount, key) && supercount[key] >= value for (key, value) in pairs(subcount))
 end
 
 """
 
-    validate(target::Integer, numbers, attempt::AbstractString)
+    missingvalues(subcol, supercol)
 
-Validates that the given `attempt` at calcuting `target` using the given `numbers` and
-the operations `+`, `-`, `*` and `/`.
+Returns the values which are missing from `supercol` but present in `subcol`.
 """
-function validate(target::Integer, numbers, attempt::AbstractString)
-    if !(
-        # check only uses numbers, arithmetic operations and whitespace
-        occursin(r"^([-+*/()]|\d+|\s+)+$", attempt) &&
-        # check that only numbers from the allowed collection were used
-        issubcol((parse(Int, m.match) for m in eachmatch(r"\d+", attempt)), numbers)
-    )
-        return false
+function missingvalues(subcol, supercol)
+    subcount = countmap(subcol)
+    supercount = countmap(supercol)
+    values = keytype(subcount)[]
+    for (key, count) in pairs(subcount)
+        for _ in 1:count - get(supercount, key, 0)
+            push!(values, key)
+        end
     end
-    parsetree = Meta.parse(attempt)
-    # check that the expression evaluates to the correct result
-    # and that only well-formed division occurs and no negative numbers occur
-    (eval(parsetree) == target) && validate(parsetree)
+    values
+end
+
+function validate(target, numbers, attempt::AbstractString)
+    validate(target, numbers, Meta.parse(attempt))
 end
 
 """
 
-    validate(expr::Expr)
+    validate(target::Integer, numbers, expr::Expr)
 
 Validates that the given expression does not break the rules of calculation, i.e.
 no negative numbers are used and division is only performed if the result is an integer.
 """
-function validate(expr::Expr)
-    if expr.head == :call
-        op = expr.args[1]
-        if op == :/ && !iszero(eval(expr.args[2]) % eval(expr.args[3])) ||
-                op == :- && eval(expr) < 0 ||
-                !validate(op)
+function validate(target::Integer, numbers, expr::Expr)
+    # check that only numbers from the allowed collection were used
+    validatenumbers(expr, numbers) &&
+        # and only the allowed operations were used
+        validatesymbols(expr)
+        # and that only well-formed division occurs
+        validatedivision(expr) &&
+        # and no negative numbers occur
+        validatesubtraction(expr) &&
+        # that the expression evaluates to the correct result
+        (eval(expr) == target)
+end
+
+keep(type::Type, expr::Expr) = append!([], keep.(type, expr.args)...)
+keep(::Type{T}, value::T) where {T} = [value]
+keep(::Type, _) = []
+
+validatedivision(str::AbstractString) = validatedivision(Meta.parse(str))
+function validatedivision(expr::Expr)
+    op = expr.args[1]
+    if (op == :/ || op == :÷)
+        l, r = eval.(expr.args[2:3])
+        if iszero(r) || !iszero(l % r)
             return false
         end
     end
-    all(validate, expr.args)
+    all(validatedivision, expr.args)
 end
-validate(n::Integer) = n > 0
-validate(s::Symbol) = s in Set((:+, :-, :*, :/, :call))
+validatedivision(_) = true
+
+validatesubtraction(str::AbstractString) = validatesubtraction(Meta.parse(str))
+function validatesubtraction(expr::Expr)
+    op = expr.args[1]
+    if op == :-
+        if eval(expr) <= 0
+            return false
+        end
+    end
+    all(validatesubtraction, expr.args)
+end
+validatesubtraction(_) = true
+
+validatenumbers(attempt::AbstractString, numbers) =
+        validatenumbers(Meta.parse(attempt), numbers)
+validatenumbers(attempt::Expr, numbers) = issubcol(keep(Int, attempt), numbers)
+
+validatesymbols(attempt::AbstractString, symbols...) =
+        validatesymbols(Meta.parse(attempt), symbols...)
+validatesymbols(attempt::Expr, symbols = Set((:+, :-, :*, :/, :÷))) =
+        issubset(keep(Symbol, attempt), symbols)
 
 """
 
@@ -301,36 +320,57 @@ function lettersgame(::CLI, _...)
         """)
 
     letters = Char[]
-    showletters() = println("    ", uppercase(join(letters, " ")))
-    vowels = 0
-    consonants = 0
-    while length(letters) < 9 && vowels > length(letters) - 6 && consonants > length(letters) - 5
+    showletters(letters) = println("    ", uppercase(join(letters, " ")))
+    vowels = 1
+    consonants = 1
+    index = 1
+    while index <= 9 && vowels > index - 6 && consonants > index - 5
         print("Vowel or consonant? ")
         str = lowercase(lstrip(readline()))
-        if occursin("please", str) && rand() < 0.37
+        if occursin("please", str) && (index == 1 || rand() < 0.3)
             println("Thank you.")
         end
-        if !isempty(str)
-            if str == "c" || occursin("consonant", str)
-                consonants += 1
-                push!(letters, randconsonant())
-                showletters()
-            elseif str == "v" || occursin("vowel", str)
-                vowels += 1
-                push!(letters, randvowel())
-                showletters()
+
+        if isempty(str)
+            if index == 1
+                shuffle!(push!(letters,
+                    randconsonant(), randvowel(), randconsonant(), randvowel(),
+                    randconsonant(), randvowel(), randconsonant()
+                ))
+                consonants += 4
+                vowels += 3
+            else
+                push!(letters,
+                    if rand(Bool)
+                        vowels += 1
+                        randvowel()
+                    else
+                        consonants += 1
+                        randconsonant()
+                    end
+                )
             end
+            showletters(letters)
+        elseif str == "c" || occursin("consonant", str)
+            consonants += 1
+            push!(letters, randconsonant())
+            showletters(letters)
+        elseif str == "v" || occursin("vowel", str)
+            vowels += 1
+            push!(letters, randvowel())
+            showletters(letters)
         end
+        index = length(letters) + 1
     end
-    for _ in consonants:3
+    for _ in consonants:4
         push!(letters, randconsonant())
     end
-    for _ in vowels:2
+    for _ in vowels:3
         push!(letters, randvowel())
     end
 
     println("\nThe letters are:\n")
-    showletters()
+    showletters(letters)
     print("\nWhat is your word? ")
 
     word = lowercase(strip(readline()))
@@ -343,9 +383,9 @@ function lettersgame(::CLI, _...)
         )\" for $(maxlen).")
     end
 
-    isindictionary = haskey(wordlist, word)
+    indictionary = haskey(wordlist, word)
     usesletters = issubcol(collect(word), letters)
-    foundaword = isindictionary && usesletters
+    foundaword = indictionary && usesletters
     len = length(word)
     score = (foundaword + (len == 9)) * len
 
@@ -356,9 +396,20 @@ function lettersgame(::CLI, _...)
         elseif len == maxlen
             println("We couldn't find anything longer than that.")
         end
-    elseif isindictionary
-        println("You don't have the right letters for \"", uppercase(word), "\".")
-    elseif !isempty(word)
+    end
+
+    if !usesletters && indictionary
+        println(
+            "You don't have the right letters for \"",
+            uppercase(word),
+            "\".\n",
+            "You need another '",
+            join(uppercase.(missingvalues(collect(word), letters)), "', '", "' and '"),
+            "' to make that word."
+        )
+    end
+
+    if !isempty(word) && !indictionary
         println("I'm afraid \"$(uppercase(word))\" isn't in the dictionary.")
     end
 
@@ -398,7 +449,7 @@ function numbersgame(::CLI, _...)
         actual = tryparse(Int, readline())
     end
     print("How did you do it? ")
-    attempt = readline()
+    attempt = Meta.parse(readline())
     if validate(actual, numbers, attempt)
         score = numberscore(target, actual)
         println(
@@ -412,10 +463,26 @@ function numbersgame(::CLI, _...)
             " points.")
         score
     else
-        result = eval(Meta.parse(attempt))
+        result = Int(floor(eval(attempt)))
         if actual != result
             println("""It seems you've made a mistake there.
             You declared $(actual) but your working gave $(result).""")
+        end
+        if !validatedivision(attempt)
+            println("You can't divide numbers if they don't divide evenly.")
+        end
+        if !validatesubtraction(attempt)
+            println("Only positive integers are allowed, you can't use 0 or below.")
+        end
+        if !validatenumbers(attempt, numbers)
+            println(
+                "You're missing a few numbers, you need another ",
+                join(missingvalues(keep(Int, attempt), numbers), ", ", " and "),
+                " to do that."
+            )
+        end
+        if !validatesymbols(attempt)
+            println("You may only use addition, subtraction, multiplication and division.")
         end
         println("You scored no points this round.")
         0
@@ -428,9 +495,9 @@ function nineogram(::CLI, _...)
 
     print("""
 
-        ===========
+        99999999999
         NINE-O-GRAM
-        ===========
+        99999999999
 
           $(uppercase(join(letters, " ")))
 
