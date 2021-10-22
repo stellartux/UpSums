@@ -21,7 +21,7 @@ wordlist, randvowel, randconsonant = let
         () -> sample(ks, ws)
     end
     (
-        Trie{Int}(line => length(line) for line in split(dictionary, '\n')),
+        Trie{Int}(line => length(line) for line in strip.(split(dictionary, '\n'))),
         weightedsampler(vowelcounts),
         weightedsampler(consonantcounts)
     )
