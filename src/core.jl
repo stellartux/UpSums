@@ -5,7 +5,7 @@ nineograms = Set(eachline("data/nineograms-en_GB.txt"))
 
 wordlist, randvowel, randconsonant = let
     dictionary = read("data/dictionary-en_GB.txt", String)
-    consonantcounts = countmap(c for c in dictionary if isletter(c))
+    consonantcounts = countmap(char for char in dictionary if isletter(char))
     vowelcounts = empty(consonantcounts)
     for vowel in "aeiou"
         vowelcounts[vowel] = consonantcounts[vowel]
@@ -23,14 +23,21 @@ wordlist, randvowel, randconsonant = let
     )
 end;
 
+eachcircshift(coll) = (circshift(coll, n) for n in 0:length(coll) - 1)
+
+"""
+
+    allwords(letters)
+
+Find all the words in the dictionary that can be formed using the given letters.
+"""
 allwords(letters) = allwords(wordlist, letters)
 allwords(letters::AbstractString) = allwords(wordlist, [letters...])
 allwords(::Nothing, _...) = []
 
 function allwords(trie, letters, prefix = "")
     words = String[]
-    for n in 1:length(letters)
-        ls = circshift(letters, n)
+    for ls in eachcircshift(letters)
         c = string(popfirst!(ls))
         if haskey(trie, c)
             push!(words, prefix * c)
@@ -40,8 +47,7 @@ function allwords(trie, letters, prefix = "")
             append!(words, allwords(s, ls, prefix * c))
         end
     end
-    sort!(words, by = length, rev = true)
-    unique!(words)
+    unique!(sort!(words, by = length, rev = true))
 end
 
 longest(word::String) = longest(allwords(word))
@@ -96,39 +102,39 @@ function missingvalues(subcol, supercol)
     values
 end
 
-function validate(target, numbers, attempt::AbstractString)
-    validate(target, numbers, Meta.parse(attempt))
+function isvalidattempt(target, numbers, attempt::AbstractString)
+    isvalidattempt(target, numbers, Meta.parse(attempt))
 end
 
-validate(target::Integer, numbers, number::Integer) = target == number && number in numbers
-validate(_...) = false
+isvalidattempt(target::Integer, numbers, number::Integer) = target == number && number in numbers
+isvalidattempt(_...) = false
 
 """
 
-    validate(target::Integer, numbers, expr::Expr)
+    isvalidattempt(target::Integer, numbers, expr::Expr)
 
 Validates that the given expression does not break the rules of calculation, i.e.
 no negative numbers are used and division is only performed if the result is an integer.
 """
-function validate(target::Integer, numbers, expr::Expr)
+function isvalidattempt(target::Integer, numbers, expr::Expr)
     # check that only numbers from the allowed collection were used
-    validatenumbers(expr, numbers) &&
+    isvalidnumbers(expr, numbers) &&
         # and only the allowed operations were used
-        validatesymbols(expr)
+        isvalidsymbols(expr)
         # and that only well-formed division occurs
-        validatedivision(expr) &&
+        isvaliddivision(expr) &&
         # and no negative numbers occur
-        validatesubtraction(expr) &&
-        # that the expression evaluates to the correct result
+        isvalidsubtraction(expr) &&
+        # and that the expression evaluates to the correct result
         (eval(expr) == target)
 end
 
-keep(type::Type, expr::Expr) = append!([], keep.(type, expr.args)...)
-keep(::Type{T}, value::T) where {T} = [value]
-keep(::Type, _) = []
+keep(::Type{T}, expr::Expr) where {T} = append!([], keep.(T, expr.args)...)
+keep(::Type{T}, value::T) where {T} = T[value]
+keep(::Type{T}, _) where {T} = T[]
 
-validatedivision(str::AbstractString) = validatedivision(Meta.parse(str))
-function validatedivision(expr::Expr)
+isvaliddivision(str::AbstractString) = isvaliddivision(Meta.parse(str))
+function isvaliddivision(expr::Expr)
     op = expr.args[1]
     if (op == :/ || op == :÷)
         l, r = eval.(expr.args[2:3])
@@ -136,31 +142,42 @@ function validatedivision(expr::Expr)
             return false
         end
     end
-    all(validatedivision, expr.args)
+    all(isvaliddivision, expr.args)
 end
-validatedivision(_) = true
+isvaliddivision(_) = true
 
-validatesubtraction(str::AbstractString) = validatesubtraction(Meta.parse(str))
-function validatesubtraction(expr::Expr)
+isvalidsubtraction(str::AbstractString) = isvalidsubtraction(Meta.parse(str))
+function isvalidsubtraction(expr::Expr)
     op = expr.args[1]
     if op == :-
         if eval(expr) <= 0
             return false
         end
     end
-    all(validatesubtraction, expr.args)
+    all(isvalidsubtraction, expr.args)
 end
-validatesubtraction(_) = true
+isvalidsubtraction(_) = true
 
-validatenumbers(attempt::AbstractString, numbers) =
-        validatenumbers(Meta.parse(attempt), numbers)
-validatenumbers(attempt::Expr, numbers) = issubcol(keep(Int, attempt), numbers)
+isvalidnumbers(expr::Expr, numbers) = issubcol(keep(Int, expr), numbers)
+isvalidnumbers(number::Integer, numbers) = number in numbers
 
-validatesymbols(attempt::AbstractString, symbols...) =
-        validatesymbols(Meta.parse(attempt), symbols...)
-validatesymbols(attempt::Expr, symbols = Set((:+, :-, :*, :/, :÷))) =
-        issubset(keep(Symbol, attempt), symbols)
-validatesymbols(_...) = false
+isvalidsymbols(expr::Expr, symbols = Set((:+, :-, :*, :/, :÷))) =
+        issubset(keep(Symbol, expr), symbols)
+isvalidsymbols(_...) = false
+
+"Like `Meta.tryparse` but for arithmetic expressions only."
+function untrustedtryparse(str::AbstractString)::Union{Expr,Integer,Nothing}
+    try
+        if occursin(r"^(\s+|\d+|[-+\/*÷()])+$", str)
+            return Meta.parse(str)
+        end
+    catch err
+        if !(err isa Meta.ParseError)
+            rethrow(err)
+        end
+    end
+    nothing
+end
 
 """
 
@@ -168,7 +185,7 @@ validatesymbols(_...) = false
 
 Generates a target and six numbers for a round of the numbers game.
 """
-function randnumbers(bigs::Integer)
+function randnumbers(bigs::Integer = rand(0:4))
     if bigs < 0 || bigs > 4
         throw(ArgumentError("The player must choose between 0 and 4 large numbers."))
     end
@@ -197,6 +214,63 @@ function numberscore(target, attempts...)
 end
 
 """
+
+    numbersolver(target::Integer, numbers)
+
+Given a target and a list of numbers, tries to find a way of creating the target using
+only the numbers provided and addition, subtraction, multiplication and integer division.
+"""
+function numbersolver(target::Integer, numbers)
+    if target <= 0
+        return nothing
+    end
+    if target in numbers
+        return target
+    end
+    for xs in eachcircshift(numbers)
+        x = popfirst!(xs)
+        if target > x
+            if !isone(x) && iszero(target % x)
+                expr = numbersolver(target ÷ x, xs)
+                if expr isa Expr && first(expr.args) == :*
+                    insert!(expr.args, 2, x)
+                    return expr
+                elseif !isnothing(expr)
+                    return Expr(:call, :*, x, expr)
+                end
+            end
+        else # if target < x
+            if iszero(x % target)
+                expr = numbersolver(target * x, xs)
+                if !isnothing(expr)
+                    result = Expr(:call, :/, x, expr)
+                    if isvaliddivision(result)
+                        return result
+                    end
+                end
+            end
+            y = x - target
+            expr = numbersolver(y, xs)
+            if !isnothing(expr)
+                result = Expr(:call, :-, x, expr)
+                if isvalidsubtraction(result)
+                    return result
+                end
+            end
+        end
+        y = target - x
+        expr = numbersolver(y, xs)
+        if expr isa Expr && first(expr.args) == :+
+            insert!(expr.args, 2, x)
+            return expr
+        elseif !isnothing(expr)
+            return Expr(:call, :+, x, expr)
+        end
+    end
+    nothing
+end
+
+"""
 The default UI for UpSums. A single player untimed version of the game that uses the
 command line interface.
 """
@@ -204,7 +278,7 @@ struct CLI end
 
 """
 
-    play(ui = CLI())
+    play(ui = CLI(); format = :full)
 
 Play a round of UpSums with the given number of players.
 
@@ -222,33 +296,33 @@ managing state.
 - `winner(ui, winners, scores)`
 - `finish(ui)` Called when the game is over.
 
+`format` should be one of `:full`, `:nine`, `:three`, `:letters`, `:numbers` or
+`:nineogram`.
 """
-function play(ui = CLI())
-    format = (
-        lettersgame,
-        lettersgame,
-        numbersgame,
-        # tea-time teaser
-        lettersgame,
-        lettersgame,
-        numbersgame,
-        lettersgame,
-        lettersgame,
-        numbersgame,
-        # tea-time teaser
-        lettersgame,
-        lettersgame,
-        lettersgame,
-        lettersgame,
-        numbersgame,
-        nineogram
+function play(ui = CLI(); format::Symbol=:full)
+    formats = (
+        full = (
+            lettersgame, lettersgame, numbersgame,
+            lettersgame, lettersgame, numbersgame,
+            lettersgame, lettersgame, numbersgame,
+            lettersgame, lettersgame, lettersgame, lettersgame, numbersgame, nineogram
+        ),
+        nine = (
+            lettersgame, lettersgame, lettersgame, numbersgame,
+            lettersgame, lettersgame, lettersgame, numbersgame, nineogram
+        ),
+        three = (lettersgame, numbersgame, nineogram),
+        letters = repeated(lettersgame),
+        numbers = repeated(numbersgame),
+        nineogram = repeated(nineogram)
     )
+    rounds = formats[format]
 
     try
         while true
             start(ui)
             scores = zeros(Int)
-            for round in format
+            for round in rounds
                 scores .+= round(ui)
                 showscore(ui, scores)
             end
@@ -335,7 +409,7 @@ function lettersgame(::CLI, _...)
             println("Thank you.")
         end
 
-        if isempty(str)
+        if isempty(str) || occursin(r"cho(os|ic)e", str)
             if index == 1
                 shuffle!(push!(letters,
                     randconsonant(), randvowel(), randconsonant(), randvowel(),
@@ -435,7 +509,11 @@ function numbersgame(::CLI, _...)
     bigs = -1
     while !(0 <= bigs <= 4)
         print("How many big numbers would you like? ")
-        bigs = something(tryparse(Int, readline()), -1)
+        str = readline()
+        bigs = something(tryparse(Int, str), -1)
+        if isempty(str)
+            bigs = rand(0:4)
+        end
         if bigs < 0
             println("Please pick a number between 0 and 4.")
         end
@@ -447,20 +525,26 @@ function numbersgame(::CLI, _...)
             $(join(lpad.(numbers, 4)))
 
         How close did you get? """)
+
     actual = tryparse(Int, readline())
     while isnothing(actual)
         print("Please enter a number. How close did you get? ")
         actual = tryparse(Int, readline())
     end
-    print("How did you do it? ")
-    attempt = Meta.parse(readline())
-    while !validatesymbols(attempt)
-        println("You may only use addition, subtraction, multiplication and division.")
+    issuccessfulattempt = abs(actual - target) <= 10
+    if issuccessfulattempt
         print("How did you do it? ")
-        attempt = Meta.parse(readline())
+        attempt = untrustedtryparse(readline())
+        while !(attempt isa Integer || (attempt isa Expr && isvalidsymbols(attempt)))
+            println("You may only use addition, subtraction, multiplication and division.")
+            print("How did you do it? ")
+            attempt = untrustedtryparse(readline())
+        end
+    else
+        attempt = actual
     end
 
-    if validate(actual, numbers, attempt)
+    if issuccessfulattempt && isvalidattempt(actual, numbers, attempt)
         score = numberscore(target, actual)
         println(
             "Well done! ",
@@ -473,23 +557,27 @@ function numbersgame(::CLI, _...)
             " points.")
         score
     else
-        result = Int(floor(eval(attempt)))
-        if actual != result
-            println("""It seems you've made a mistake there.
-            You declared $(actual) but your working gave $(result).""")
+        if issuccessfulattempt
+            result = Int(floor(eval(attempt)))
+            if actual != result
+                println("""It seems you've made a mistake there.
+                    You declared $(actual) but your working gave $(result).""")
+            end
+            if !isvaliddivision(attempt)
+                println("You can't divide numbers if they don't divide evenly.")
+            end
+            if !isvalidsubtraction(attempt)
+                println("Only positive integers are allowed, you can't use 0 or below.")
+            end
+            if !isvalidnumbers(attempt, numbers)
+                println("You're missing a few numbers, you need another ",
+                    join(missingvalues(keep(Int, attempt), numbers), ", ", " and "),
+                    " to do that.")
+            end
         end
-        if !validatedivision(attempt)
-            println("You can't divide numbers if they don't divide evenly.")
-        end
-        if !validatesubtraction(attempt)
-            println("Only positive integers are allowed, you can't use 0 or below.")
-        end
-        if !validatenumbers(attempt, numbers)
-            println(
-                "You're missing a few numbers, you need another ",
-                join(missingvalues(keep(Int, attempt), numbers), ", ", " and "),
-                " to do that."
-            )
+        answer = numbersolver(target, numbers)
+        if !isnothing(answer)
+            println("It can be done, you could have ", answer)
         end
         println("You scored no points this round.")
         0
@@ -512,7 +600,7 @@ function nineogram(::CLI, _...)
 
     answer = lowercase(strip(readline()))
 
-    if haskey(wordlist, answer)
+    if !isempty(answer) && haskey(wordlist, answer)
         print("""
             Let's see if it's up there!
 
