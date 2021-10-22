@@ -6,6 +6,9 @@ nineograms = Set(eachline(wraploader("data/nineograms-en_GB.txt")))
 
 wordlist, randvowel, randconsonant = let
     dictionary = read(wraploader("data/dictionary-en_GB.txt"), String)
+    if isempty(dictionary)
+        @error "No dictionary found"
+    end
     consonantcounts = countmap(char for char in dictionary if isletter(char))
     vowelcounts = empty(consonantcounts)
     for vowel in "aeiou"
