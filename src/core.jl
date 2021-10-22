@@ -1,10 +1,11 @@
 using DataStructures, Base.Iterators, Random, StatsBase
 
+wraploader(str) = isinteractive() ? str : joinpath(@__DIR__, "..", str)
 loadwordlist(path::AbstractString) = Trie{Int}(line => length(line) for line in eachline(path))
-nineograms = Set(eachline("data/nineograms-en_GB.txt"))
+nineograms = Set(eachline(wraploader("data/nineograms-en_GB.txt")))
 
 wordlist, randvowel, randconsonant = let
-    dictionary = read("data/dictionary-en_GB.txt", String)
+    dictionary = read(wraploader("data/dictionary-en_GB.txt"), String)
     consonantcounts = countmap(char for char in dictionary if isletter(char))
     vowelcounts = empty(consonantcounts)
     for vowel in "aeiou"
