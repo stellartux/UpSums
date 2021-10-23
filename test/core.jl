@@ -23,5 +23,5 @@ include("../src/core.jl")
     @test numbersolver(122, [100, 25, 2, 1]) == :(100 + (25 - (2 + 1)))
 
     # Can find solutions that require addition before multiplication
-    @test_broken numbersolver(66, [8, 4, 3, 2]) == :((4 + 2) * (8 + 3))
+    @test numbersolver(66, [8, 4, 3, 2]) == :((8 + 3) * (2 + 4))
 end

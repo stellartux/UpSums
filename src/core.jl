@@ -243,6 +243,25 @@ function numbersolver(target::Integer, numbers)
                     return Expr(:call, :*, x, expr)
                 end
             end
+            for ys in eachcircshift(xs)
+                y = popfirst!(ys)
+                if x + y == target
+                    return :($x + $y)
+                end
+                if iszero(target % (x + y))
+                    expr = numbersolver(target ÷ (x + y), ys)
+                    if isnothing(expr)
+                        continue
+                    end
+                    lhs = Expr(:call, :+, x, y)
+                    if expr isa Expr && first(expr.args) == :*
+                        insert!(expr.args, 2, lhs)
+                        return expr
+                    else
+                        return Expr(:call, :*, lhs, expr)
+                    end
+                end
+            end
         else # if target < x
             if iszero(x % target)
                 expr = numbersolver(target * x, xs)
