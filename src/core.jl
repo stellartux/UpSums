@@ -4,7 +4,7 @@ loadwordlist(path::AbstractString) = Trie{Int}(line => length(line) for line in 
 nineograms = Set(eachline("data/nineograms-en_GB.txt"))
 
 wordlist, randvowel, randconsonant = let
-    dictionary = read("data/dictionary-en_GB.txt", String)
+    dictionary = read(joinpath(@__DIR__, "..", "data", "dictionary-en_GB.txt"), String)
     if isempty(dictionary)
         @error "No dictionary found"
     end
@@ -14,11 +14,12 @@ wordlist, randvowel, randconsonant = let
         vowelcounts[vowel] = consonantcounts[vowel]
         delete!(consonantcounts, vowel)
     end
-    weightedsampler(counts) = let
-        ks = collect(keys(counts))
-        ws = fweights(collect(values(counts)))
-        () -> sample(ks, ws)
-    end
+    weightedsampler(counts) =
+        let
+            ks = collect(keys(counts))
+            ws = fweights(collect(values(counts)))
+            () -> sample(ks, ws)
+        end
     (
         Trie{Int}(line => length(line) for line in split(dictionary, r"\s+")),
         weightedsampler(vowelcounts),
@@ -26,7 +27,7 @@ wordlist, randvowel, randconsonant = let
     )
 end;
 
-eachcircshift(coll) = (circshift(coll, n) for n in 0:length(coll) - 1)
+eachcircshift(coll) = (circshift(coll, n) for n in 0:length(coll)-1)
 
 """
 
@@ -98,7 +99,7 @@ function missingvalues(subcol, supercol)
     supercount = countmap(supercol)
     values = keytype(subcount)[]
     for (key, count) in pairs(subcount)
-        for _ in 1:count - get(supercount, key, 0)
+        for _ in 1:count-get(supercount, key, 0)
             push!(values, key)
         end
     end
@@ -123,7 +124,7 @@ function isvalidattempt(target::Integer, numbers, expr::Expr)
     # check that only numbers from the allowed collection were used
     isvalidnumbers(expr, numbers) &&
         # and only the allowed operations were used
-        isvalidsymbols(expr)
+        isvalidsymbols(expr) &&
         # and that only well-formed division occurs
         isvaliddivision(expr) &&
         # and no negative numbers occur
@@ -165,7 +166,7 @@ isvalidnumbers(expr::Expr, numbers) = issubcol(keep(Int, expr), numbers)
 isvalidnumbers(number::Integer, numbers) = number in numbers
 
 isvalidsymbols(expr::Expr, symbols = Set((:+, :-, :*, :/, :÷))) =
-        issubset(keep(Symbol, expr), symbols)
+    issubset(keep(Symbol, expr), symbols)
 isvalidsymbols(_...) = false
 
 "Like `Meta.tryparse` but for arithmetic expressions only."
